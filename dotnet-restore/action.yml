@@ -1,0 +1,119 @@
+name: 'dotnet-restore'
+description: 'Restore NuGet packages for .NET projects'
+author: 'GitHub Actions Migration Agent'
+
+inputs:
+  projects:
+    description: 'Glob pattern for project files (e.g., "**/*.csproj")'
+    required: true
+  working-directory:
+    description: 'Working directory for the operation'
+    required: false
+    default: '.'
+  verbosity:
+    description: 'Verbosity level'
+    required: false
+    default: 'minimal'
+  no-cache:
+    description: 'Skip using the cache'
+    required: false
+    default: 'false'
+
+outputs:
+  success:
+    description: 'Boolean indicating if restore was successful'
+    value: ${{ steps.restore-step.outputs.success }}
+  packages-restored:
+    description: 'Number of packages restored'
+    value: ${{ steps.restore-step.outputs.packages-restored }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Restore .NET packages
+      id: restore-step
+      shell: pwsh
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        $projects = "${{ inputs.projects }}"
+        $verbosity = "${{ inputs.verbosity }}"
+        $noCache = "${{ inputs.no-cache }}"
+        
+        Write-Host "Starting .NET restore operation..."
+        Write-Host "Projects pattern: $projects"
+        Write-Host "Verbosity: $verbosity"
+        Write-Host "No cache: $noCache"
+        
+        # Build dotnet restore command
+        $restoreArgs = @("restore")
+        
+        if ($projects) {
+            # Find matching project files
+            $projectFiles = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Where-Object { $_.FullName -like "*$projects*" -or $projects -eq "**/*.csproj" }
+            
+            if ($projectFiles.Count -eq 0) {
+                Write-Host "No project files found matching pattern: $projects"
+                echo "success=false" >> $env:GITHUB_OUTPUT
+                echo "packages-restored=0" >> $env:GITHUB_OUTPUT
+                exit 1
+            }
+            
+            Write-Host "Found $($projectFiles.Count) project file(s)"
+            foreach ($file in $projectFiles) {
+                Write-Host "  - $($file.FullName)"
+            }
+        }
+        
+        # Add verbosity
+        if ($verbosity -ne "minimal") {
+            $restoreArgs += "--verbosity", $verbosity
+        }
+        
+        # Add no-cache option
+        if ($noCache -eq "true") {
+            $restoreArgs += "--no-cache"
+        }
+        
+        # Add projects pattern
+        if ($projects) {
+            $restoreArgs += $projects
+        }
+        
+        Write-Host "Executing: dotnet $($restoreArgs -join ' ')"
+        
+        try {
+            # Execute dotnet restore
+            $output = & dotnet @restoreArgs 2>&1
+            $exitCode = $LASTEXITCODE
+            
+            Write-Host $output
+            
+            if ($exitCode -eq 0) {
+                Write-Host "✅ Restore completed successfully"
+                
+                # Count restored packages from output
+                $packagesCount = 0
+                if ($output -match "Restored (\d+) package") {
+                    $packagesCount = [int]$matches[1]
+                } elseif ($output -match "(\d+) package\(s\) to") {
+                    $packagesCount = [int]$matches[1]
+                }
+                
+                echo "success=true" >> $env:GITHUB_OUTPUT
+                echo "packages-restored=$packagesCount" >> $env:GITHUB_OUTPUT
+            } else {
+                Write-Host "❌ Restore failed with exit code: $exitCode"
+                echo "success=false" >> $env:GITHUB_OUTPUT
+                echo "packages-restored=0" >> $env:GITHUB_OUTPUT
+                exit $exitCode
+            }
+        } catch {
+            Write-Host "❌ Error during restore: $($_.Exception.Message)"
+            echo "success=false" >> $env:GITHUB_OUTPUT
+            echo "packages-restored=0" >> $env:GITHUB_OUTPUT
+            exit 1
+        }
+
+branding:
+  icon: 'download'
+  color: 'blue'

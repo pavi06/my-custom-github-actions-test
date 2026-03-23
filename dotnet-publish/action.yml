@@ -1,0 +1,238 @@
+name: 'dotnet-publish'
+description: 'Publish .NET applications for deployment'
+author: 'GitHub Actions Migration Agent'
+
+inputs:
+  configuration:
+    description: 'Publish configuration (e.g., "Release", "Debug")'
+    required: true
+  output-path:
+    description: 'Output directory for published files'
+    required: true
+  working-directory:
+    description: 'Working directory for the operation'
+    required: false
+    default: '.'
+  publish-web-projects:
+    description: 'Automatically detect and publish web projects'
+    required: false
+    default: 'false'
+  projects:
+    description: 'Specific projects to publish (if not using auto-detection)'
+    required: false
+  runtime:
+    description: 'Target runtime identifier (e.g., "win-x64", "linux-x64")'
+    required: false
+  self-contained:
+    description: 'Create self-contained deployment'
+    required: false
+    default: 'false'
+  verbosity:
+    description: 'Verbosity level'
+    required: false
+    default: 'minimal'
+
+outputs:
+  success:
+    description: 'Boolean indicating if publish was successful'
+    value: ${{ steps.publish-step.outputs.success }}
+  publish-path:
+    description: 'Path to published output'
+    value: ${{ steps.publish-step.outputs.publish-path }}
+  published-files-count:
+    description: 'Number of files in publish output'
+    value: ${{ steps.publish-step.outputs.published-files-count }}
+  publish-size:
+    description: 'Total size of published output'
+    value: ${{ steps.publish-step.outputs.publish-size }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Publish .NET applications
+      id: publish-step
+      shell: pwsh
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        $configuration = "${{ inputs.configuration }}"
+        $outputPath = "${{ inputs.output-path }}"
+        $publishWebProjects = "${{ inputs.publish-web-projects }}"
+        $projects = "${{ inputs.projects }}"
+        $runtime = "${{ inputs.runtime }}"
+        $selfContained = "${{ inputs.self-contained }}"
+        $verbosity = "${{ inputs.verbosity }}"
+        
+        Write-Host "Starting .NET publish operation..."
+        Write-Host "Configuration: $configuration"
+        Write-Host "Output path: $outputPath"
+        Write-Host "Publish web projects: $publishWebProjects"
+        Write-Host "Projects: $projects"
+        Write-Host "Runtime: $runtime"
+        Write-Host "Self-contained: $selfContained"
+        Write-Host "Verbosity: $verbosity"
+        
+        # Determine which projects to publish
+        $projectsToPublish = @()
+        
+        if ($publishWebProjects -eq "true") {
+            # Auto-detect web projects
+            $webProjects = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Where-Object {
+                $content = Get-Content $_.FullName -Raw
+                $content -match "<Project.*Sdk=.*Microsoft\.NET\.Sdk\.Web" -or
+                $content -match "<PackageReference.*Microsoft\.AspNetCore" -or
+                $content -match "<FrameworkReference.*Microsoft\.AspNetCore\.App"
+            }
+            
+            if ($webProjects.Count -eq 0) {
+                Write-Host "No web projects found for auto-detection"
+                if (-not $projects) {
+                    Write-Host "❌ No projects specified and no web projects found"
+                    echo "success=false" >> $env:GITHUB_OUTPUT
+                    echo "publish-path=" >> $env:GITHUB_OUTPUT
+                    echo "published-files-count=0" >> $env:GITHUB_OUTPUT
+                    echo "publish-size=0" >> $env:GITHUB_OUTPUT
+                    exit 1
+                }
+            } else {
+                Write-Host "Found $($webProjects.Count) web project(s)"
+                foreach ($project in $webProjects) {
+                    Write-Host "  - $($project.FullName)"
+                    $projectsToPublish += $project.FullName
+                }
+            }
+        }
+        
+        if ($projects) {
+            # Use specified projects
+            $specifiedProjects = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Where-Object { 
+                $_.FullName -like "*$projects*" -or $projects -eq "**/*.csproj"
+            }
+            
+            if ($specifiedProjects.Count -eq 0) {
+                Write-Host "No project files found matching pattern: $projects"
+                echo "success=false" >> $env:GITHUB_OUTPUT
+                echo "publish-path=" >> $env:GITHUB_OUTPUT
+                echo "published-files-count=0" >> $env:GITHUB_OUTPUT
+                echo "publish-size=0" >> $env:GITHUB_OUTPUT
+                exit 1
+            }
+            
+            Write-Host "Found $($specifiedProjects.Count) specified project(s)"
+            foreach ($project in $specifiedProjects) {
+                Write-Host "  - $($project.FullName)"
+                if ($projectsToPublish -notcontains $project.FullName) {
+                    $projectsToPublish += $project.FullName
+                }
+            }
+        }
+        
+        if ($projectsToPublish.Count -eq 0) {
+            Write-Host "❌ No projects to publish"
+            echo "success=false" >> $env:GITHUB_OUTPUT
+            echo "publish-path=" >> $env:GITHUB_OUTPUT
+            echo "published-files-count=0" >> $env:GITHUB_OUTPUT
+            echo "publish-size=0" >> $env:GITHUB_OUTPUT
+            exit 1
+        }
+        
+        # Create output directory if it doesn't exist
+        if (-not (Test-Path $outputPath)) {
+            New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+            Write-Host "Created output directory: $outputPath"
+        }
+        
+        $allSuccess = $true
+        $totalFilesCount = 0
+        $totalSize = 0
+        
+        # Publish each project
+        foreach ($projectPath in $projectsToPublish) {
+            Write-Host "Publishing project: $projectPath"
+            
+            # Build dotnet publish command
+            $publishArgs = @("publish", $projectPath)
+            
+            # Add configuration
+            $publishArgs += "--configuration", $configuration
+            
+            # Add output path (create subdirectory for each project if multiple)
+            $projectOutputPath = $outputPath
+            if ($projectsToPublish.Count -gt 1) {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                $projectOutputPath = Join-Path $outputPath $projectName
+            }
+            $publishArgs += "--output", $projectOutputPath
+            
+            # Add verbosity
+            if ($verbosity -ne "minimal") {
+                $publishArgs += "--verbosity", $verbosity
+            }
+            
+            # Add runtime
+            if ($runtime) {
+                $publishArgs += "--runtime", $runtime
+            }
+            
+            # Add self-contained option
+            if ($selfContained -eq "true") {
+                $publishArgs += "--self-contained", "true"
+            } else {
+                $publishArgs += "--self-contained", "false"
+            }
+            
+            Write-Host "Executing: dotnet $($publishArgs -join ' ')"
+            
+            try {
+                # Execute dotnet publish
+                $output = & dotnet @publishArgs 2>&1
+                $exitCode = $LASTEXITCODE
+                
+                Write-Host $output
+                
+                if ($exitCode -eq 0) {
+                    Write-Host "✅ Published successfully: $projectPath"
+                    
+                    # Count files and calculate size
+                    if (Test-Path $projectOutputPath) {
+                        $files = Get-ChildItem -Path $projectOutputPath -Recurse -File
+                        $filesCount = $files.Count
+                        $size = ($files | Measure-Object -Property Length -Sum).Sum
+                        
+                        Write-Host "  Files: $filesCount"
+                        Write-Host "  Size: $([math]::Round($size / 1MB, 2)) MB"
+                        
+                        $totalFilesCount += $filesCount
+                        $totalSize += $size
+                    }
+                } else {
+                    Write-Host "❌ Publish failed for project: $projectPath (exit code: $exitCode)"
+                    $allSuccess = $false
+                }
+            } catch {
+                Write-Host "❌ Error publishing project $projectPath : $($_.Exception.Message)"
+                $allSuccess = $false
+            }
+        }
+        
+        if ($allSuccess) {
+            Write-Host "✅ All projects published successfully"
+            Write-Host "Total files: $totalFilesCount"
+            Write-Host "Total size: $([math]::Round($totalSize / 1MB, 2)) MB"
+            
+            echo "success=true" >> $env:GITHUB_OUTPUT
+            echo "publish-path=$outputPath" >> $env:GITHUB_OUTPUT
+            echo "published-files-count=$totalFilesCount" >> $env:GITHUB_OUTPUT
+            echo "publish-size=$totalSize" >> $env:GITHUB_OUTPUT
+        } else {
+            Write-Host "❌ Some projects failed to publish"
+            
+            echo "success=false" >> $env:GITHUB_OUTPUT
+            echo "publish-path=$outputPath" >> $env:GITHUB_OUTPUT
+            echo "published-files-count=$totalFilesCount" >> $env:GITHUB_OUTPUT
+            echo "publish-size=$totalSize" >> $env:GITHUB_OUTPUT
+            exit 1
+        }
+
+branding:
+  icon: 'package'
+  color: 'orange'
