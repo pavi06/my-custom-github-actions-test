@@ -1,171 +1,75 @@
-name: 'dotnet-build'
-description: 'Build .NET projects'
+name: '.NET Build'
+description: 'Build .NET solutions using MSBuild/dotnet build'
 author: 'GitHub Actions Migration Agent'
 
 inputs:
-  projects:
-    description: 'Glob pattern for project files (e.g., "**/*.csproj")'
+  solution:
+    description: 'Path to solution file'
     required: true
   configuration:
-    description: 'Build configuration (e.g., "Release", "Debug")'
+    description: 'Build configuration (Debug/Release)'
     required: true
-  working-directory:
-    description: 'Working directory for the operation'
+  platform:
+    description: 'Target platform'
+    required: true
+  vs-version:
+    description: 'Visual Studio version'
     required: false
-    default: '.'
-  verbosity:
-    description: 'Verbosity level'
-    required: false
-    default: 'minimal'
-  no-restore:
-    description: 'Skip restore during build'
+    default: 'latest'
+  clean:
+    description: 'Clean before build'
     required: false
     default: 'false'
-  output-directory:
-    description: 'Output directory for build artifacts'
+  restore-packages:
+    description: 'Restore NuGet packages before build'
     required: false
+    default: 'false'
 
 outputs:
-  success:
-    description: 'Boolean indicating if build was successful'
-    value: ${{ steps.build-step.outputs.success }}
+  build-status:
+    description: 'Success/Failure status'
+    value: ${{ steps.build.outputs.build-status }}
   build-output-path:
-    description: 'Path to build output directory'
-    value: ${{ steps.build-step.outputs.build-output-path }}
-  warnings-count:
-    description: 'Number of build warnings'
-    value: ${{ steps.build-step.outputs.warnings-count }}
-  errors-count:
-    description: 'Number of build errors'
-    value: ${{ steps.build-step.outputs.errors-count }}
+    description: 'Path to build outputs'
+    value: ${{ steps.build.outputs.build-output-path }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Build .NET projects
-      id: build-step
-      shell: pwsh
-      working-directory: ${{ inputs.working-directory }}
+    - name: Build .NET solution
+      id: build
+      shell: bash
       run: |
-        $projects = "${{ inputs.projects }}"
-        $configuration = "${{ inputs.configuration }}"
-        $verbosity = "${{ inputs.verbosity }}"
-        $noRestore = "${{ inputs.no-restore }}"
-        $outputDirectory = "${{ inputs.output-directory }}"
+        echo "Starting .NET build for ${{ inputs.solution }}"
         
-        Write-Host "Starting .NET build operation..."
-        Write-Host "Projects pattern: $projects"
-        Write-Host "Configuration: $configuration"
-        Write-Host "Verbosity: $verbosity"
-        Write-Host "No restore: $noRestore"
-        Write-Host "Output directory: $outputDirectory"
+        # Set build output path
+        build_output_path="${{ github.workspace }}/bin/${{ inputs.configuration }}"
+        echo "build-output-path=$build_output_path" >> $GITHUB_OUTPUT
         
-        # Build dotnet build command
-        $buildArgs = @("build")
+        # Clean if requested
+        if [ "${{ inputs.clean }}" = "true" ]; then
+          echo "Cleaning solution..."
+          dotnet clean "${{ inputs.solution }}" --configuration "${{ inputs.configuration }}"
+        fi
         
-        if ($projects) {
-            # Find matching project files
-            $projectFiles = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Where-Object { $_.FullName -like "*$projects*" -or $projects -eq "**/*.csproj" }
-            
-            if ($projectFiles.Count -eq 0) {
-                Write-Host "No project files found matching pattern: $projects"
-                echo "success=false" >> $env:GITHUB_OUTPUT
-                echo "build-output-path=" >> $env:GITHUB_OUTPUT
-                echo "warnings-count=0" >> $env:GITHUB_OUTPUT
-                echo "errors-count=1" >> $env:GITHUB_OUTPUT
-                exit 1
-            }
-            
-            Write-Host "Found $($projectFiles.Count) project file(s)"
-            foreach ($file in $projectFiles) {
-                Write-Host "  - $($file.FullName)"
-            }
-        }
+        # Restore packages if requested
+        if [ "${{ inputs.restore-packages }}" = "true" ]; then
+          echo "Restoring packages..."
+          dotnet restore "${{ inputs.solution }}"
+        fi
         
-        # Add configuration
-        if ($configuration) {
-            $buildArgs += "--configuration", $configuration
-        }
+        # Build the solution
+        echo "Building solution with configuration: ${{ inputs.configuration }}, platform: ${{ inputs.platform }}"
         
-        # Add verbosity
-        if ($verbosity -ne "minimal") {
-            $buildArgs += "--verbosity", $verbosity
-        }
+        if dotnet build "${{ inputs.solution }}" \
+          --configuration "${{ inputs.configuration }}" \
+          --no-restore \
+          --verbosity normal; then
+          echo "build-status=success" >> $GITHUB_OUTPUT
+          echo "Build completed successfully"
+        else
+          echo "build-status=failure" >> $GITHUB_OUTPUT
+          echo "Build failed"
+          exit 1
+        fi
         
-        # Add no-restore option
-        if ($noRestore -eq "true") {
-            $buildArgs += "--no-restore"
-        }
-        
-        # Add output directory
-        if ($outputDirectory) {
-            $buildArgs += "--output", $outputDirectory
-        }
-        
-        # Add projects pattern
-        if ($projects) {
-            $buildArgs += $projects
-        }
-        
-        Write-Host "Executing: dotnet $($buildArgs -join ' ')"
-        
-        try {
-            # Execute dotnet build
-            $output = & dotnet @buildArgs 2>&1
-            $exitCode = $LASTEXITCODE
-            
-            Write-Host $output
-            
-            # Parse warnings and errors from output
-            $warningsCount = 0
-            $errorsCount = 0
-            $buildOutputPath = ""
-            
-            if ($output -match "(\d+) Warning\(s\)") {
-                $warningsCount = [int]$matches[1]
-            }
-            
-            if ($output -match "(\d+) Error\(s\)") {
-                $errorsCount = [int]$matches[1]
-            }
-            
-            # Determine build output path
-            if ($outputDirectory) {
-                $buildOutputPath = $outputDirectory
-            } else {
-                # Default output path based on configuration
-                $buildOutputPath = "bin/$configuration"
-            }
-            
-            if ($exitCode -eq 0) {
-                Write-Host "✅ Build completed successfully"
-                Write-Host "Warnings: $warningsCount"
-                Write-Host "Errors: $errorsCount"
-                
-                echo "success=true" >> $env:GITHUB_OUTPUT
-                echo "build-output-path=$buildOutputPath" >> $env:GITHUB_OUTPUT
-                echo "warnings-count=$warningsCount" >> $env:GITHUB_OUTPUT
-                echo "errors-count=$errorsCount" >> $env:GITHUB_OUTPUT
-            } else {
-                Write-Host "❌ Build failed with exit code: $exitCode"
-                Write-Host "Warnings: $warningsCount"
-                Write-Host "Errors: $errorsCount"
-                
-                echo "success=false" >> $env:GITHUB_OUTPUT
-                echo "build-output-path=$buildOutputPath" >> $env:GITHUB_OUTPUT
-                echo "warnings-count=$warningsCount" >> $env:GITHUB_OUTPUT
-                echo "errors-count=$errorsCount" >> $env:GITHUB_OUTPUT
-                exit $exitCode
-            }
-        } catch {
-            Write-Host "❌ Error during build: $($_.Exception.Message)"
-            echo "success=false" >> $env:GITHUB_OUTPUT
-            echo "build-output-path=" >> $env:GITHUB_OUTPUT
-            echo "warnings-count=0" >> $env:GITHUB_OUTPUT
-            echo "errors-count=1" >> $env:GITHUB_OUTPUT
-            exit 1
-        }
-
-branding:
-  icon: 'tool'
-  color: 'green'
