@@ -1,187 +1,232 @@
-# dotnet-test Action
+# .NET Test Action
 
-A GitHub Action to execute unit tests for .NET projects.
+A GitHub Action to execute .NET tests using VSTest/dotnet test.
 
 ## Description
 
-This action executes `dotnet test` command with specified parameters to run unit tests for .NET projects. It supports glob patterns for test project selection, provides detailed test results, and optionally collects code coverage.
+This action executes `dotnet test` command to run .NET tests with specified configuration and platform settings. It provides comprehensive test execution with result parsing, parallel execution support, and optional code coverage collection.
 
 ## Inputs
 
 | Input | Description | Required | Default |
-|-------|-------------|----------|---------||
-| `projects` | Glob pattern for test project files (e.g., `**/*Tests/*.csproj`) | Yes | - |
-| `configuration` | Test configuration (e.g., `Release`, `Debug`) | Yes | - |
-| `working-directory` | Working directory for the operation | No | `.` |
-| `verbosity` | Verbosity level (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) | No | `minimal` |
-| `no-build` | Skip building before testing | No | `false` |
-| `collect-coverage` | Collect code coverage | No | `false` |
-| `logger` | Test logger format | No | `console` |
+|-------|-------------|----------|---------|
+| `configuration` | Build configuration | Yes | - |
+| `platform` | Target platform | Yes | - |
+| `test-assembly-pattern` | Pattern for test assemblies | Yes | - |
+| `exclude-pattern` | Exclusion pattern for test files | No | `''` |
+| `results-folder` | Test results output folder | No | `TestResults` |
+| `run-in-parallel` | Run tests in parallel | No | `false` |
+| `code-coverage` | Enable code coverage | No | `false` |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `success` | Boolean indicating if all tests passed |
-| `tests-total` | Total number of tests executed |
-| `tests-passed` | Number of tests that passed |
-| `tests-failed` | Number of tests that failed |
-| `tests-skipped` | Number of tests that were skipped |
-| `coverage-report-path` | Path to coverage report (if enabled) |
+| `test-results` | Test execution results |
+| `tests-passed` | Number of tests passed |
+| `tests-failed` | Number of tests failed |
 
 ## Usage
 
 ### Basic Usage
 
 ```yaml
-- name: Test
-  uses: ./.github/actions/dotnet-test
+- name: Run tests
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
   with:
-    projects: '**/*Tests/*.csproj'
     configuration: 'Release'
+    platform: 'Any CPU'
+    test-assembly-pattern: '**/*test*.dll'
 ```
 
 ### Advanced Usage
 
 ```yaml
-- name: Test with coverage
-  uses: ./.github/actions/dotnet-test
+- name: Run tests with coverage
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
   with:
-    projects: 'tests/**/*.csproj'
     configuration: 'Debug'
-    working-directory: './MyProject'
-    verbosity: 'normal'
-    no-build: 'true'
-    collect-coverage: 'true'
-    logger: 'trx'
+    platform: 'x64'
+    test-assembly-pattern: '**/*Tests.dll'
+    exclude-pattern: '!**/obj/**'
+    results-folder: 'CustomTestResults'
+    run-in-parallel: 'true'
+    code-coverage: 'true'
 ```
 
 ### Using Outputs
 
 ```yaml
-- name: Test
+- name: Run tests
   id: test
-  uses: ./.github/actions/dotnet-test
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
   with:
-    projects: '**/*Tests/*.csproj'
     configuration: 'Release'
+    platform: 'Any CPU'
+    test-assembly-pattern: '**/*test*.dll'
 
 - name: Check test results
   run: |
-    echo "Tests successful: ${{ steps.test.outputs.success }}"
-    echo "Total tests: ${{ steps.test.outputs.tests-total }}"
-    echo "Passed: ${{ steps.test.outputs.tests-passed }}"
-    echo "Failed: ${{ steps.test.outputs.tests-failed }}"
-    echo "Skipped: ${{ steps.test.outputs.tests-skipped }}"
-    
-- name: Upload coverage report
-  if: steps.test.outputs.coverage-report-path != ''
-  uses: actions/upload-artifact@v4
-  with:
-    name: coverage-report
-    path: ${{ steps.test.outputs.coverage-report-path }}
+    echo "Test results: ${{ steps.test.outputs.test-results }}"
+    echo "Tests passed: ${{ steps.test.outputs.tests-passed }}"
+    echo "Tests failed: ${{ steps.test.outputs.tests-failed }}"
 ```
 
 ## Environment Requirements
 
 - .NET SDK must be pre-installed (use `actions/setup-dotnet` before this action)
-- Test projects must be built (unless `no-build` is `true`)
-- Access to test dependencies
+- Test assemblies must be built before running tests
+- Access to test dependencies and test data
 
 ## Error Handling
 
 The action will:
-- Validate that test project files exist matching the specified pattern
-- Parse test output to extract test statistics
-- Provide detailed error messages for troubleshooting
+- Search for test assemblies matching the specified pattern
+- Apply exclusion patterns to filter out unwanted files
+- Execute tests with proper error handling
+- Parse test results from TRX files
 - Set appropriate exit codes on test failure
-- Output comprehensive test results
+- Provide detailed test execution statistics
 
 ## Examples
 
-### Run All Tests
+### Complete Test Pipeline
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: actions/setup-dotnet@v4
+  
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
     with:
-      dotnet-version: '8.0.x'
-  - uses: ./.github/actions/dotnet-restore
+      dotnet-version: '6.0.x'
+      
+  - name: Restore packages
+    uses: pavi06/my-custom-github-actions-test/nuget-restore@main
     with:
-      projects: '**/*.csproj'
-  - uses: ./.github/actions/dotnet-build
+      solution: '**/*.sln'
+      
+  - name: Build solution
+    uses: pavi06/my-custom-github-actions-test/dotnet-build@main
     with:
-      projects: '**/*.csproj'
+      solution: '**/*.sln'
       configuration: 'Release'
-  - uses: ./.github/actions/dotnet-test
+      platform: 'Any CPU'
+      
+  - name: Run tests
+    uses: pavi06/my-custom-github-actions-test/dotnet-test@main
     with:
-      projects: '**/*Tests/*.csproj'
       configuration: 'Release'
+      platform: 'Any CPU'
+      test-assembly-pattern: '**/*test*.dll'
+      exclude-pattern: '!**/obj/**'
 ```
 
 ### Test with Coverage Collection
 
 ```yaml
-- name: Test with coverage
+- name: Run tests with coverage
   id: test
-  uses: ./.github/actions/dotnet-test
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
   with:
-    projects: '**/*Tests/*.csproj'
     configuration: 'Release'
-    collect-coverage: 'true'
+    platform: 'Any CPU'
+    test-assembly-pattern: '**/*Tests.dll'
+    code-coverage: 'true'
 
-- name: Upload coverage reports
+- name: Upload test results
   uses: actions/upload-artifact@v4
+  if: always()
   with:
-    name: coverage-reports
-    path: ${{ steps.test.outputs.coverage-report-path }}
+    name: test-results
+    path: TestResults/
 ```
 
-### Test with Failure Threshold
+### Parallel Test Execution
 
 ```yaml
-- name: Test
-  id: test
-  uses: ./.github/actions/dotnet-test
+- name: Run tests in parallel
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
   with:
-    projects: '**/*Tests/*.csproj'
     configuration: 'Release'
+    platform: 'Any CPU'
+    test-assembly-pattern: '**/*test*.dll'
+    run-in-parallel: 'true'
+    results-folder: 'ParallelTestResults'
+```
 
-- name: Check test coverage
+### Test with Failure Handling
+
+```yaml
+- name: Run tests
+  id: test
+  uses: pavi06/my-custom-github-actions-test/dotnet-test@main
+  with:
+    configuration: 'Release'
+    platform: 'Any CPU'
+    test-assembly-pattern: '**/*test*.dll'
+  continue-on-error: true
+
+- name: Report test results
   run: |
-    total=${{ steps.test.outputs.tests-total }}
-    passed=${{ steps.test.outputs.tests-passed }}
-    if [ $total -gt 0 ]; then
-      coverage=$((passed * 100 / total))
-      echo "Test coverage: ${coverage}%"
-      if [ $coverage -lt 80 ]; then
-        echo "Test coverage below 80%"
-        exit 1
-      fi
+    if [ "${{ steps.test.outputs.test-results }}" = "failure" ]; then
+      echo "Tests failed: ${{ steps.test.outputs.tests-failed }} failures"
+      echo "Tests passed: ${{ steps.test.outputs.tests-passed }}"
+    else
+      echo "All tests passed: ${{ steps.test.outputs.tests-passed }}"
     fi
 ```
+
+## Test Assembly Pattern Examples
+
+| Pattern | Description |
+|---------|-------------|
+| `**/*test*.dll` | All DLLs containing 'test' in the name |
+| `**/*Tests.dll` | All DLLs ending with 'Tests.dll' |
+| `**/bin/Release/*test*.dll` | Test DLLs in Release build folders |
+| `tests/**/*.dll` | All DLLs in tests directory |
+
+## Exclusion Pattern Examples
+
+| Pattern | Description |
+|---------|-------------|
+| `!**/obj/**` | Exclude files in obj directories |
+| `!**/bin/Debug/**` | Exclude Debug build outputs |
+| `!**/*Integration*` | Exclude integration test assemblies |
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **No test projects found**: Verify the `projects` glob pattern matches your test project structure
-2. **Test failures**: Check the test output for specific test failure details
-3. **Missing test dependencies**: Ensure all test dependencies are restored and built
-4. **Coverage collection issues**: Verify coverage tools are available in the test environment
+1. **No test assemblies found**: Verify the `test-assembly-pattern` matches your build output structure
+2. **Test failures**: Check the test output and TRX files for specific test failure details
+3. **Missing test dependencies**: Ensure all test dependencies are available at runtime
+4. **Coverage collection issues**: Verify coverage tools are installed and accessible
 
 ### Debug Mode
 
-For troubleshooting, use higher verbosity:
+For troubleshooting, check the action logs for:
+- Test assembly discovery process
+- Find command execution
+- Test execution output
+- TRX file parsing results
+- Test statistics calculation
 
-```yaml
-- uses: ./.github/actions/dotnet-test
-  with:
-    projects: '**/*Tests/*.csproj'
-    configuration: 'Debug'
-    verbosity: 'diagnostic'
-```
+### No Tests Found
+
+If no tests are found:
+1. Verify your test assemblies are built in the specified configuration
+2. Check that test assembly names match the pattern
+3. Ensure test assemblies are not excluded by the exclusion pattern
+4. Verify the build output directory structure
+
+## Integration with Other Actions
+
+This action works well with:
+- `actions/setup-dotnet` - Set up .NET SDK
+- `pavi06/my-custom-github-actions-test/dotnet-build@main` - Build before testing
+- `actions/upload-artifact@v4` - Upload test results and coverage reports
+- Test reporting actions for processing TRX files
 
 ## License
 
