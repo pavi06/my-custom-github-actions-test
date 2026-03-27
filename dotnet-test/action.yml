@@ -1,210 +1,133 @@
-name: 'dotnet-test'
-description: 'Execute unit tests for .NET projects'
+name: '.NET Test'
+description: 'Execute .NET tests using VSTest/dotnet test'
 author: 'GitHub Actions Migration Agent'
 
 inputs:
-  projects:
-    description: 'Glob pattern for test project files (e.g., "**/*Tests/*.csproj")'
-    required: true
   configuration:
-    description: 'Test configuration (e.g., "Release", "Debug")'
+    description: 'Build configuration'
     required: true
-  working-directory:
-    description: 'Working directory for the operation'
+  platform:
+    description: 'Target platform'
+    required: true
+  test-assembly-pattern:
+    description: 'Pattern for test assemblies'
+    required: true
+  exclude-pattern:
+    description: 'Exclusion pattern for test files'
     required: false
-    default: '.'
-  verbosity:
-    description: 'Verbosity level'
+    default: ''
+  results-folder:
+    description: 'Test results output folder'
     required: false
-    default: 'minimal'
-  no-build:
-    description: 'Skip building before testing'
+    default: 'TestResults'
+  run-in-parallel:
+    description: 'Run tests in parallel'
     required: false
     default: 'false'
-  collect-coverage:
-    description: 'Collect code coverage'
+  code-coverage:
+    description: 'Enable code coverage'
     required: false
     default: 'false'
-  logger:
-    description: 'Test logger format'
-    required: false
-    default: 'console'
 
 outputs:
-  success:
-    description: 'Boolean indicating if all tests passed'
-    value: ${{ steps.test-step.outputs.success }}
-  tests-total:
-    description: 'Total number of tests executed'
-    value: ${{ steps.test-step.outputs.tests-total }}
+  test-results:
+    description: 'Test execution results'
+    value: ${{ steps.test.outputs.test-results }}
   tests-passed:
-    description: 'Number of tests that passed'
-    value: ${{ steps.test-step.outputs.tests-passed }}
+    description: 'Number of tests passed'
+    value: ${{ steps.test.outputs.tests-passed }}
   tests-failed:
-    description: 'Number of tests that failed'
-    value: ${{ steps.test-step.outputs.tests-failed }}
-  tests-skipped:
-    description: 'Number of tests that were skipped'
-    value: ${{ steps.test-step.outputs.tests-skipped }}
-  coverage-report-path:
-    description: 'Path to coverage report (if enabled)'
-    value: ${{ steps.test-step.outputs.coverage-report-path }}
+    description: 'Number of tests failed'
+    value: ${{ steps.test.outputs.tests-failed }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Execute .NET tests
-      id: test-step
-      shell: pwsh
-      working-directory: ${{ inputs.working-directory }}
+    - name: Run .NET tests
+      id: test
+      shell: bash
       run: |
-        $projects = "${{ inputs.projects }}"
-        $configuration = "${{ inputs.configuration }}"
-        $verbosity = "${{ inputs.verbosity }}"
-        $noBuild = "${{ inputs.no-build }}"
-        $collectCoverage = "${{ inputs.collect-coverage }}"
-        $logger = "${{ inputs.logger }}"
+        echo "Starting .NET test execution"
         
-        Write-Host "Starting .NET test operation..."
-        Write-Host "Projects pattern: $projects"
-        Write-Host "Configuration: $configuration"
-        Write-Host "Verbosity: $verbosity"
-        Write-Host "No build: $noBuild"
-        Write-Host "Collect coverage: $collectCoverage"
-        Write-Host "Logger: $logger"
+        # Create results folder
+        results_folder="${{ inputs.results-folder }}"
+        mkdir -p "$results_folder"
+        
+        # Find test assemblies
+        echo "Searching for test assemblies with pattern: ${{ inputs.test-assembly-pattern }}"
+        
+        # Build find command for test assemblies
+        find_cmd="find ${{ github.workspace }} -name '*.dll' -path '*${{ inputs.configuration }}*' -name '*test*'"
+        
+        if [ -n "${{ inputs.exclude-pattern }}" ]; then
+          # Remove the '!' prefix if present and add exclusion
+          exclude_pattern="${{ inputs.exclude-pattern }}"
+          exclude_pattern="${exclude_pattern#!}"
+          find_cmd="$find_cmd ! -path '*$exclude_pattern*'"
+        fi
+        
+        echo "Find command: $find_cmd"
+        test_assemblies=$(eval $find_cmd)
+        
+        if [ -z "$test_assemblies" ]; then
+          echo "No test assemblies found"
+          echo "test-results=no-tests" >> $GITHUB_OUTPUT
+          echo "tests-passed=0" >> $GITHUB_OUTPUT
+          echo "tests-failed=0" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "Found test assemblies:"
+        echo "$test_assemblies"
         
         # Build dotnet test command
-        $testArgs = @("test")
+        test_cmd="dotnet test"
+        test_cmd="$test_cmd --configuration ${{ inputs.configuration }}"
+        test_cmd="$test_cmd --logger trx --results-directory $results_folder"
+        test_cmd="$test_cmd --no-build --no-restore"
         
-        if ($projects) {
-            # Find matching test project files
-            $testFiles = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Where-Object { 
-                ($_.FullName -like "*$projects*" -or $projects -eq "**/*Tests/*.csproj") -and
-                ($_.Name -like "*Test*" -or $_.Directory.Name -like "*Test*")
-            }
-            
-            if ($testFiles.Count -eq 0) {
-                Write-Host "No test project files found matching pattern: $projects"
-                echo "success=false" >> $env:GITHUB_OUTPUT
-                echo "tests-total=0" >> $env:GITHUB_OUTPUT
-                echo "tests-passed=0" >> $env:GITHUB_OUTPUT
-                echo "tests-failed=0" >> $env:GITHUB_OUTPUT
-                echo "tests-skipped=0" >> $env:GITHUB_OUTPUT
-                echo "coverage-report-path=" >> $env:GITHUB_OUTPUT
-                exit 1
-            }
-            
-            Write-Host "Found $($testFiles.Count) test project file(s)"
-            foreach ($file in $testFiles) {
-                Write-Host "  - $($file.FullName)"
-            }
-        }
+        if [ "${{ inputs.run-in-parallel }}" = "true" ]; then
+          test_cmd="$test_cmd --parallel"
+        fi
         
-        # Add configuration
-        if ($configuration) {
-            $testArgs += "--configuration", $configuration
-        }
+        if [ "${{ inputs.code-coverage }}" = "true" ]; then
+          test_cmd="$test_cmd --collect:'XPlat Code Coverage'"
+        fi
         
-        # Add verbosity
-        if ($verbosity -ne "minimal") {
-            $testArgs += "--verbosity", $verbosity
-        }
+        # Run tests for each assembly
+        total_passed=0
+        total_failed=0
+        overall_result="success"
         
-        # Add no-build option
-        if ($noBuild -eq "true") {
-            $testArgs += "--no-build"
-        }
+        for assembly in $test_assemblies; do
+          echo "Running tests for: $assembly"
+          
+          if eval "$test_cmd \"$assembly\""; then
+            echo "Tests passed for $assembly"
+          else
+            echo "Tests failed for $assembly"
+            overall_result="failure"
+          fi
+        done
         
-        # Add logger
-        if ($logger -ne "console") {
-            $testArgs += "--logger", $logger
-        }
+        # Parse test results from TRX files
+        if [ -d "$results_folder" ]; then
+          for trx_file in "$results_folder"/*.trx; do
+            if [ -f "$trx_file" ]; then
+              passed=$(grep -o 'passed="[0-9]*"' "$trx_file" | grep -o '[0-9]*' || echo "0")
+              failed=$(grep -o 'failed="[0-9]*"' "$trx_file" | grep -o '[0-9]*' || echo "0")
+              total_passed=$((total_passed + passed))
+              total_failed=$((total_failed + failed))
+            fi
+          done
+        fi
         
-        # Add coverage collection
-        $coverageReportPath = ""
-        if ($collectCoverage -eq "true") {
-            $testArgs += "--collect", "XPlat Code Coverage"
-            $coverageReportPath = "./TestResults"
-        }
+        echo "test-results=$overall_result" >> $GITHUB_OUTPUT
+        echo "tests-passed=$total_passed" >> $GITHUB_OUTPUT
+        echo "tests-failed=$total_failed" >> $GITHUB_OUTPUT
         
-        # Add projects pattern
-        if ($projects) {
-            $testArgs += $projects
-        }
+        echo "Test execution completed. Passed: $total_passed, Failed: $total_failed"
         
-        Write-Host "Executing: dotnet $($testArgs -join ' ')"
-        
-        try {
-            # Execute dotnet test
-            $output = & dotnet @testArgs 2>&1
-            $exitCode = $LASTEXITCODE
-            
-            Write-Host $output
-            
-            # Parse test results from output
-            $testsTotal = 0
-            $testsPassed = 0
-            $testsFailed = 0
-            $testsSkipped = 0
-            
-            # Parse different output formats
-            if ($output -match "Total tests: (\d+)") {
-                $testsTotal = [int]$matches[1]
-            }
-            
-            if ($output -match "Passed: (\d+)") {
-                $testsPassed = [int]$matches[1]
-            }
-            
-            if ($output -match "Failed: (\d+)") {
-                $testsFailed = [int]$matches[1]
-            }
-            
-            if ($output -match "Skipped: (\d+)") {
-                $testsSkipped = [int]$matches[1]
-            }
-            
-            # Alternative parsing for different output format
-            if ($output -match "(\d+) passed, (\d+) failed, (\d+) skipped") {
-                $testsPassed = [int]$matches[1]
-                $testsFailed = [int]$matches[2]
-                $testsSkipped = [int]$matches[3]
-                $testsTotal = $testsPassed + $testsFailed + $testsSkipped
-            }
-            
-            if ($exitCode -eq 0) {
-                Write-Host "✅ All tests passed successfully"
-                Write-Host "Total: $testsTotal, Passed: $testsPassed, Failed: $testsFailed, Skipped: $testsSkipped"
-                
-                echo "success=true" >> $env:GITHUB_OUTPUT
-                echo "tests-total=$testsTotal" >> $env:GITHUB_OUTPUT
-                echo "tests-passed=$testsPassed" >> $env:GITHUB_OUTPUT
-                echo "tests-failed=$testsFailed" >> $env:GITHUB_OUTPUT
-                echo "tests-skipped=$testsSkipped" >> $env:GITHUB_OUTPUT
-                echo "coverage-report-path=$coverageReportPath" >> $env:GITHUB_OUTPUT
-            } else {
-                Write-Host "❌ Tests failed with exit code: $exitCode"
-                Write-Host "Total: $testsTotal, Passed: $testsPassed, Failed: $testsFailed, Skipped: $testsSkipped"
-                
-                echo "success=false" >> $env:GITHUB_OUTPUT
-                echo "tests-total=$testsTotal" >> $env:GITHUB_OUTPUT
-                echo "tests-passed=$testsPassed" >> $env:GITHUB_OUTPUT
-                echo "tests-failed=$testsFailed" >> $env:GITHUB_OUTPUT
-                echo "tests-skipped=$testsSkipped" >> $env:GITHUB_OUTPUT
-                echo "coverage-report-path=$coverageReportPath" >> $env:GITHUB_OUTPUT
-                exit $exitCode
-            }
-        } catch {
-            Write-Host "❌ Error during test execution: $($_.Exception.Message)"
-            echo "success=false" >> $env:GITHUB_OUTPUT
-            echo "tests-total=0" >> $env:GITHUB_OUTPUT
-            echo "tests-passed=0" >> $env:GITHUB_OUTPUT
-            echo "tests-failed=0" >> $env:GITHUB_OUTPUT
-            echo "tests-skipped=0" >> $env:GITHUB_OUTPUT
-            echo "coverage-report-path=" >> $env:GITHUB_OUTPUT
-            exit 1
-        }
-
-branding:
-  icon: 'check-circle'
-  color: 'purple'
+        if [ "$overall_result" = "failure" ]; then
+          exit 1
+        fi
