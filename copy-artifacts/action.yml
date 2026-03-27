@@ -1,0 +1,117 @@
+name: 'Copy Artifacts'
+description: 'Copy files and folders with pattern matching'
+author: 'GitHub Actions Migration Agent'
+
+inputs:
+  source-folder:
+    description: 'Source directory path'
+    required: true
+  contents:
+    description: 'File patterns to copy'
+    required: true
+  target-folder:
+    description: 'Destination directory'
+    required: true
+  clean-target:
+    description: 'Clean target folder before copy'
+    required: false
+    default: 'false'
+  overwrite:
+    description: 'Overwrite existing files'
+    required: false
+    default: 'false'
+  flatten-folders:
+    description: 'Flatten folder structure'
+    required: false
+    default: 'false'
+
+outputs:
+  files-copied:
+    description: 'Number of files copied'
+    value: ${{ steps.copy.outputs.files-copied }}
+  copy-status:
+    description: 'Success/Failure status'
+    value: ${{ steps.copy.outputs.copy-status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Copy artifacts
+      id: copy
+      shell: bash
+      run: |
+        echo "Starting file copy operation"
+        echo "Source: ${{ inputs.source-folder }}"
+        echo "Contents: ${{ inputs.contents }}"
+        echo "Target: ${{ inputs.target-folder }}"
+        
+        source_folder="${{ inputs.source-folder }}"
+        target_folder="${{ inputs.target-folder }}"
+        contents="${{ inputs.contents }}"
+        
+        # Clean target folder if requested
+        if [ "${{ inputs.clean-target }}" = "true" ]; then
+          echo "Cleaning target folder: $target_folder"
+          rm -rf "$target_folder"
+        fi
+        
+        # Create target folder
+        mkdir -p "$target_folder"
+        
+        # Initialize counters
+        files_copied=0
+        
+        # Change to source directory
+        cd "$source_folder"
+        
+        # Handle multiple patterns (space or newline separated)
+        echo "$contents" | while IFS= read -r pattern || [ -n "$pattern" ]; do
+          # Skip empty patterns
+          [ -z "$pattern" ] && continue
+          
+          echo "Processing pattern: $pattern"
+          
+          # Find files matching the pattern
+          if [ "${{ inputs.flatten-folders }}" = "true" ]; then
+            # Flatten folder structure
+            find . -path "./$pattern" -type f | while read -r file; do
+              filename=$(basename "$file")
+              target_file="$target_folder/$filename"
+              
+              if [ "${{ inputs.overwrite }}" = "true" ] || [ ! -f "$target_file" ]; then
+                cp "$file" "$target_file"
+                echo "Copied (flattened): $file -> $target_file"
+                files_copied=$((files_copied + 1))
+              else
+                echo "Skipped (exists): $target_file"
+              fi
+            done
+          else
+            # Preserve folder structure
+            find . -path "./$pattern" -type f | while read -r file; do
+              # Remove leading ./
+              relative_path="${file#./}"
+              target_file="$target_folder/$relative_path"
+              target_dir=$(dirname "$target_file")
+              
+              # Create target directory
+              mkdir -p "$target_dir"
+              
+              if [ "${{ inputs.overwrite }}" = "true" ] || [ ! -f "$target_file" ]; then
+                cp "$file" "$target_file"
+                echo "Copied: $file -> $target_file"
+                files_copied=$((files_copied + 1))
+              else
+                echo "Skipped (exists): $target_file"
+              fi
+            done
+          fi
+        done
+        
+        # Count total files copied
+        total_files=$(find "$target_folder" -type f | wc -l)
+        
+        echo "files-copied=$total_files" >> $GITHUB_OUTPUT
+        echo "copy-status=success" >> $GITHUB_OUTPUT
+        
+        echo "Copy operation completed. Files copied: $total_files"
