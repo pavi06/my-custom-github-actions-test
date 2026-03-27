@@ -1,163 +1,177 @@
-# dotnet-build Action
+# .NET Build Action
 
-A GitHub Action to build .NET projects.
+A GitHub Action to build .NET solutions using MSBuild/dotnet build.
 
 ## Description
 
-This action executes `dotnet build` command with specified configuration and parameters to build .NET projects. It supports glob patterns for project selection and provides detailed output about the build operation including warnings and errors count.
+This action executes `dotnet build` command to build .NET solutions with specified configuration and platform settings. It provides comprehensive build management including optional cleaning and package restoration.
 
 ## Inputs
 
 | Input | Description | Required | Default |
-|-------|-------------|----------|---------||
-| `projects` | Glob pattern for project files (e.g., `**/*.csproj`) | Yes | - |
-| `configuration` | Build configuration (e.g., `Release`, `Debug`) | Yes | - |
-| `working-directory` | Working directory for the operation | No | `.` |
-| `verbosity` | Verbosity level (`quiet`, `minimal`, `normal`, `detailed`, `diagnostic`) | No | `minimal` |
-| `no-restore` | Skip restore during build | No | `false` |
-| `output-directory` | Output directory for build artifacts | No | - |
+|-------|-------------|----------|---------|
+| `solution` | Path to solution file | Yes | - |
+| `configuration` | Build configuration (Debug/Release) | Yes | - |
+| `platform` | Target platform | Yes | - |
+| `vs-version` | Visual Studio version | No | `latest` |
+| `clean` | Clean before build | No | `false` |
+| `restore-packages` | Restore NuGet packages before build | No | `false` |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `success` | Boolean indicating if build was successful |
-| `build-output-path` | Path to build output directory |
-| `warnings-count` | Number of build warnings |
-| `errors-count` | Number of build errors |
+| `build-status` | Success/Failure status |
+| `build-output-path` | Path to build outputs |
 
 ## Usage
 
 ### Basic Usage
 
 ```yaml
-- name: Build
-  uses: ./.github/actions/dotnet-build
+- name: Build solution
+  uses: pavi06/my-custom-github-actions-test/dotnet-build@main
   with:
-    projects: '**/*.csproj'
+    solution: '**/*.sln'
     configuration: 'Release'
+    platform: 'Any CPU'
 ```
 
 ### Advanced Usage
 
 ```yaml
-- name: Build with custom settings
-  uses: ./.github/actions/dotnet-build
+- name: Build with clean and restore
+  uses: pavi06/my-custom-github-actions-test/dotnet-build@main
   with:
-    projects: 'src/**/*.csproj'
+    solution: 'src/MyApp.sln'
     configuration: 'Debug'
-    working-directory: './MyProject'
-    verbosity: 'normal'
-    no-restore: 'true'
-    output-directory: './build-output'
+    platform: 'x64'
+    clean: 'true'
+    restore-packages: 'true'
+    vs-version: '2022'
 ```
 
 ### Using Outputs
 
 ```yaml
-- name: Build
+- name: Build solution
   id: build
-  uses: ./.github/actions/dotnet-build
+  uses: pavi06/my-custom-github-actions-test/dotnet-build@main
   with:
-    projects: '**/*.csproj'
+    solution: '**/*.sln'
     configuration: 'Release'
+    platform: 'Any CPU'
 
 - name: Check build results
   run: |
-    echo "Build successful: ${{ steps.build.outputs.success }}"
+    echo "Build status: ${{ steps.build.outputs.build-status }}"
     echo "Build output path: ${{ steps.build.outputs.build-output-path }}"
-    echo "Warnings: ${{ steps.build.outputs.warnings-count }}"
-    echo "Errors: ${{ steps.build.outputs.errors-count }}"
 ```
 
 ## Environment Requirements
 
 - .NET SDK must be pre-installed (use `actions/setup-dotnet` before this action)
-- Dependencies must be restored (unless `no-restore` is `true`)
-- Write access to output directories
+- Solution file must exist at the specified path
+- Write access to build output directories
 
 ## Error Handling
 
 The action will:
-- Validate that project files exist matching the specified pattern
-- Parse build output to count warnings and errors
-- Provide detailed error messages for troubleshooting
+- Validate that the solution file exists
+- Optionally clean the solution before building
+- Optionally restore NuGet packages before building
+- Execute the build with proper error handling
 - Set appropriate exit codes on failure
-- Output build statistics and paths
+- Provide detailed build status information
 
 ## Examples
 
-### Build All Projects in Release Mode
+### Complete Build Pipeline
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: actions/setup-dotnet@v4
+  
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
     with:
-      dotnet-version: '8.0.x'
-  - uses: ./.github/actions/dotnet-restore
+      dotnet-version: '6.0.x'
+      
+  - name: Restore NuGet packages
+    uses: pavi06/my-custom-github-actions-test/nuget-restore@main
     with:
-      projects: '**/*.csproj'
-  - uses: ./.github/actions/dotnet-build
+      solution: '**/*.sln'
+      verbosity: 'normal'
+      
+  - name: Build solution
+    uses: pavi06/my-custom-github-actions-test/dotnet-build@main
     with:
-      projects: '**/*.csproj'
+      solution: '**/*.sln'
       configuration: 'Release'
+      platform: 'Any CPU'
 ```
 
-### Build with Custom Output Directory
+### Build with Clean
 
 ```yaml
-steps:
-  - uses: actions/checkout@v4
-  - uses: actions/setup-dotnet@v4
-    with:
-      dotnet-version: '8.0.x'
-  - uses: ./.github/actions/dotnet-build
-    with:
-      projects: 'src/MyApp/*.csproj'
-      configuration: 'Release'
-      output-directory: './artifacts/build'
-      no-restore: 'true'
-```
-
-### Build with Warning Threshold
-
-```yaml
-- name: Build
-  id: build
-  uses: ./.github/actions/dotnet-build
+- name: Clean and build
+  uses: pavi06/my-custom-github-actions-test/dotnet-build@main
   with:
-    projects: '**/*.csproj'
+    solution: 'MyProject.sln'
     configuration: 'Release'
+    platform: 'Any CPU'
+    clean: 'true'
+```
 
-- name: Check for warnings
-  run: |
-    if [ "${{ steps.build.outputs.warnings-count }}" -gt "10" ]; then
-      echo "Too many warnings: ${{ steps.build.outputs.warnings-count }}"
-      exit 1
-    fi
+### Build Multiple Configurations
+
+```yaml
+strategy:
+  matrix:
+    configuration: [Debug, Release]
+    platform: [x86, x64, 'Any CPU']
+
+steps:
+  - uses: actions/checkout@v4
+  
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
+    with:
+      dotnet-version: '6.0.x'
+      
+  - name: Build ${{ matrix.configuration }} - ${{ matrix.platform }}
+    uses: pavi06/my-custom-github-actions-test/dotnet-build@main
+    with:
+      solution: '**/*.sln'
+      configuration: ${{ matrix.configuration }}
+      platform: ${{ matrix.platform }}
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **No project files found**: Verify the `projects` glob pattern matches your repository structure
+1. **Solution file not found**: Verify the `solution` path pattern matches your repository structure
 2. **Build errors**: Check the build output for specific compilation errors
-3. **Missing dependencies**: Ensure restore was run before build (unless `no-restore` is `true`)
-4. **Permission errors**: Ensure the runner has write access to output directories
+3. **Missing dependencies**: Ensure NuGet packages are restored before building
+4. **Platform mismatch**: Verify the specified platform is supported by your solution
 
 ### Debug Mode
 
-For troubleshooting, use higher verbosity:
+For troubleshooting, the action provides detailed logging by default. Check the action logs for:
+- Solution file discovery
+- Clean operation status
+- Package restoration status
+- Build command execution
+- Build output and errors
 
-```yaml
-- uses: ./.github/actions/dotnet-build
-  with:
-    projects: '**/*.csproj'
-    configuration: 'Debug'
-    verbosity: 'diagnostic'
-```
+## Integration with Other Actions
+
+This action works well with:
+- `actions/setup-dotnet` - Set up .NET SDK
+- `pavi06/my-custom-github-actions-test/nuget-restore@main` - Restore packages
+- `pavi06/my-custom-github-actions-test/dotnet-test@main` - Run tests
+- `pavi06/my-custom-github-actions-test/copy-artifacts@main` - Copy build outputs
 
 ## License
 
