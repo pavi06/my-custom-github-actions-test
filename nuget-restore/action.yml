@@ -1,0 +1,68 @@
+name: 'NuGet Restore'
+description: 'Restore NuGet packages for .NET solutions'
+author: 'GitHub Actions Migration Agent'
+
+inputs:
+  solution:
+    description: 'Path to solution file or packages.config'
+    required: true
+  verbosity:
+    description: 'Verbosity level for restore operation'
+    required: false
+    default: 'normal'
+  no-cache:
+    description: 'Disable package caching'
+    required: false
+    default: 'false'
+  disable-parallel:
+    description: 'Disable parallel processing'
+    required: false
+    default: 'false'
+
+outputs:
+  packages-restored:
+    description: 'Number of packages restored'
+    value: ${{ steps.restore.outputs.packages-restored }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Restore NuGet packages
+      id: restore
+      shell: bash
+      run: |
+        echo "Starting NuGet restore for ${{ inputs.solution }}"
+        
+        # Build NuGet command
+        cmd="nuget restore '${{ inputs.solution }}'"
+        
+        if [ "${{ inputs.verbosity }}" != "normal" ]; then
+          cmd="$cmd -Verbosity ${{ inputs.verbosity }}"
+        fi
+        
+        if [ "${{ inputs.no-cache }}" = "true" ]; then
+          cmd="$cmd -NoCache"
+        fi
+        
+        if [ "${{ inputs.disable-parallel }}" = "true" ]; then
+          cmd="$cmd -DisableParallelProcessing"
+        fi
+        
+        echo "Executing: $cmd"
+        
+        # Execute restore and capture output
+        output=$(eval $cmd 2>&1)
+        exit_code=$?
+        
+        echo "$output"
+        
+        # Count restored packages
+        packages_count=$(echo "$output" | grep -c "Successfully installed" || echo "0")
+        echo "packages-restored=$packages_count" >> $GITHUB_OUTPUT
+        
+        if [ $exit_code -ne 0 ]; then
+          echo "NuGet restore failed with exit code $exit_code"
+          exit $exit_code
+        fi
+        
+        echo "NuGet restore completed successfully. Packages restored: $packages_count"
